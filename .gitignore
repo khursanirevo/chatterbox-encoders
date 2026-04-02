@@ -36,9 +36,26 @@ weights/*.safetensors
 weights/*.json
 !weights/README.md
 
+# Checkpoints and speaker embeddings
+checkpoints/
+spkr/
+
 # Test files
 test_*.wav
 *_reconstructed.wav
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Generated artifacts
+*.png
+*.pt
+*.pth
+llm_inputs_*.json
+
+# Temporary experimentation
+tmp.py
 
 # OS
 .DS_Store

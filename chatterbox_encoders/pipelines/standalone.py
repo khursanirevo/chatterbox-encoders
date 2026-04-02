@@ -80,10 +80,10 @@ class StandaloneReconstructionPipeline:
 
     def _load_decoder(self):
         """Load S3Gen decoder from local weights."""
-        from chatterbox_encoders.audio.decoder import MinimalS3Gen
+        from chatterbox_encoders.audio.decoder import S3GenDecoder
 
         logger.info("Loading S3Gen decoder...")
-        decoder = MinimalS3Gen.from_pretrained(
+        decoder = S3GenDecoder.from_pretrained(
             str(self.weights_dir),
             device=self.device
         )

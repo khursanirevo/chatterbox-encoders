@@ -21,6 +21,7 @@ from chatterbox_encoders.config.defaults import (
     VOICE_ENCODER_HIDDEN_SIZE,
     VOICE_ENCODER_EMBED_SIZE,
     VOICE_ENCODER_NUM_LAYERS,
+    VOICE_ENCODER_NORMALIZED_MELS,
 )
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class VoiceEncConfig:
     """Configuration for VoiceEncoder."""
-    normalized_mels: bool = True
+    normalized_mels: bool = VOICE_ENCODER_NORMALIZED_MELS
     ve_partial_frames: int = 96
     sample_rate: int = VOICE_ENCODER_SAMPLE_RATE
     num_mels: int = VOICE_ENCODER_NUM_MELS
@@ -305,6 +306,6 @@ class VoiceEncoder(nn.Module):
         if trim_top_db:
             wavs = [librosa.effects.trim(wav, top_db=trim_top_db)[0] for wav in wavs]
 
-        mels = [melspectrogram(wav, self.hp).T for w in wavs]
+        mels = [melspectrogram(wav, self.hp) for wav in wavs]
 
         return self.embeds_from_mels(mels, as_spk=as_spk, batch_size=batch_size, **kwargs)

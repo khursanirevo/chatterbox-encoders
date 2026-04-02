@@ -36,6 +36,7 @@ VOICE_ENCODER_SAMPLE_RATE: int = 16000
 VOICE_ENCODER_HIDDEN_SIZE: int = 256
 VOICE_ENCODER_NUM_LAYERS: int = 3
 VOICE_ENCODER_EMBED_SIZE: int = 256
+VOICE_ENCODER_NORMALIZED_MELS: bool = False  # Use log-scale mels
 
 # =============================================================================
 # Perceiver Defaults
