@@ -1,12 +1,25 @@
 # Qwen3-Omni vLLM Inference Design
 
 **Date:** 2026-04-02
-**Status:** Approved
+**Status:** Needs Revision
 **Author:** Claude (with user approval)
 
 ## Overview
 
 Set up vLLM offline inference for Qwen3-Omni-30B-A3B-Captioner to generate structured speech analysis captions at maximum throughput. The system processes audio files and outputs 9-field structured analysis in JSONL format.
+
+## Prerequisites
+
+1. **QwenOmniAudioEncoder Implementation** (BLOCKING)
+   - The encoder must be implemented before this work
+   - Currently only test file exists: `tests/test_qwen_omni_encoder.py`
+   - Implementation file needed: `chatterbox_encoders/audio/qwen_omni_encoder.py`
+   - **Action**: Implement encoder as part of this work or as separate prerequisite
+
+2. **Model Availability Verification** (BLOCKING)
+   - Verify `Qwen/Qwen3-Omni-30B-A3B-Captioner` exists on HuggingFace
+   - If not available, identify alternative model or fine-tuning strategy
+   - **Fallback**: Use base Qwen3-Omni model with custom prompt engineering
 
 ## Target Output Format
 
@@ -44,7 +57,25 @@ Each audio file generates a JSON object with these fields:
 3. **Caption Generator** (`vllm/caption_generator.py`)
    - Formats prompts with audio embeddings and instructions
    - Parses vLLM outputs into 9-field JSON structure
+   - Validates JSON output and retries on parse failures
    - Manages JSONL output and error logging
+
+**vLLM Integration Strategy:**
+
+Since vLLM is designed for text-only inference, audio embeddings will be converted to a text representation:
+- **Option A (Preferred)**: If Qwen3-Omni supports audio tokens natively, use special audio tokens
+- **Option B (Fallback)**: Convert audio embeddings to base64-encoded text in prompt
+- **Option C (Alternative)**: Use a hybrid approach where audio encoder outputs are used as context
+
+**Prompt Template:**
+```python
+prompt = f"""You are a speech analysis expert. Analyze the audio features below and output ONLY valid JSON with these fields:
+emotion, profile, mood, speed, prosody, pitch_timbre, style, notes, caption
+
+Audio features (base64-encoded embeddings): {audio_embeddings_b64}
+
+Output only valid JSON, nothing else."""
+```
 
 ### Data Flow
 
@@ -80,7 +111,7 @@ captioner = QwenOmniCaptioner(
 results = captioner.generate_batch(
     audio_paths=["file1.wav", "file2.wav", ...],
     output_path="captions.jsonl",
-    batch_size=500,  # Optional
+    batch_size=100,  # Optional, auto-detected if not specified
 )
 
 # Returns statistics
@@ -103,8 +134,10 @@ chatterbox_encoders/
 │   ├── caption_generator.py  # StructuredCaptionGenerator
 │   └── preprocessor.py       # QwenOmniAudioPreprocessor
 └── audio/
-    └── qwen_omni_encoder.py  # Reuse existing
+    └── qwen_omni_encoder.py  # TO BE IMPLEMENTED (prerequisite)
 ```
+
+**Note**: `qwen_omni_encoder.py` must be implemented before vLLM inference can work.
 
 ## Performance Optimization
 
@@ -126,7 +159,6 @@ llm = LLM(
 sampling_params = SamplingParams(
     temperature=0.0,                     # Deterministic (fastest)
     max_tokens=512,
-    stop=["}"],
     best_of=1,
 )
 ```
@@ -134,9 +166,10 @@ sampling_params = SamplingParams(
 ### Batching Strategy
 
 - **Smart batching**: Group prompts by token length
-- **Max batch size**: ~500 files initially (with 432GB GPU RAM)
-- **Chunking**: Process >1000 files in chunks
+- **Max batch size**: Start with 50-100 files, scale up based on memory usage
+- **Chunking**: Process >1000 files in chunks to avoid OOM
 - **Tensor parallel**: Split each batch across 3 GPUs
+- **Auto-tuning**: Monitor GPU memory and adjust batch size dynamically
 
 ### Audio Preprocessing
 
@@ -150,6 +183,22 @@ With 3x H200 @ 144GB (432GB total):
 - 30B model @ 4-bit quantization: ~15GB per GPU
 - Remaining ~420GB for KV cache and batch processing
 - Estimated: 50-100 audio files per batch (depends on duration)
+
+## JSON Parsing Robustness
+
+The caption generator must handle malformed JSON from the LLM:
+
+**Parsing Strategy:**
+1. **Primary**: Use standard `json.loads()` with try/except
+2. **Fallback 1**: Use `lm-format-enforcer` if available to constrain output
+3. **Fallback 2**: Regex-based JSON extraction from text
+4. **Retry**: If all fail, retry with lower temperature (0.0 → 0.1)
+5. **Failure**: After 3 retries, log to error file
+
+**Validation:**
+- Check all 9 required fields exist
+- Validate field types (all strings)
+- Log warnings for missing/extra fields
 
 ## Error Handling
 
@@ -205,18 +254,26 @@ Add to `pyproject.toml`:
 [project.optional-dependencies]
 vllm = [
     "vllm>=0.6.0",
+    "lm-format-enforcer>=0.10.0",  # Optional, for JSON output enforcement
 ]
 ```
 
 ## Implementation Checklist
 
+### Prerequisites
+- [ ] Implement `QwenOmniAudioEncoder` in `chatterbox_encoders/audio/qwen_omni_encoder.py`
+- [ ] Verify Qwen3-Omni-30B-A3B-Captioner model availability on HuggingFace
+- [ ] Test Qwen3-Omni audio token support in vLLM
+
+### vLLM Inference Implementation
 - [ ] Install vLLM dependency
 - [ ] Create `vllm/` package structure
 - [ ] Implement `QwenOmniAudioPreprocessor`
 - [ ] Implement `VLLMInferenceEngine`
-- [ ] Implement `StructuredCaptionGenerator`
+- [ ] Implement `StructuredCaptionGenerator` with robust JSON parsing
 - [ ] Implement main `QwenOmniCaptioner` class
 - [ ] Add error handling and logging
-- [ ] Test with small batch
-- [ ] Performance test with large batch
+- [ ] Test with small batch (10 files)
+- [ ] Performance test with medium batch (100 files)
+- [ ] Scale test with large batch (500+ files)
 - [ ] Update documentation
