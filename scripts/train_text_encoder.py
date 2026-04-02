@@ -40,7 +40,7 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from chatterbox_encoders.audio import PerceiverResampler, S3Tokenizer
-from chatterbox_encoders.text_analysis import TextToAudioEmbedding
+from chatterbox_encoders.text_analysis import TextToAudioEmbedding, multi_scale_loss
 from chatterbox_encoders.utils.device import get_device
 
 logging.basicConfig(
@@ -196,6 +196,7 @@ def train_epoch(
     dataloader: DataLoader,
     optimizer: optim.Optimizer,
     device: str,
+    num_scales: int = 4,
 ) -> float:
     """Train for one epoch."""
     model.train()
@@ -211,8 +212,8 @@ def train_epoch(
         optimizer.zero_grad()
         prediction = model(text_labels)  # (batch, 32, 1024)
 
-        # Compute loss (MSE between prediction and ground truth)
-        loss = nn.functional.mse_loss(prediction, ground_truth)
+        # Compute multi-scale loss
+        loss = multi_scale_loss(prediction, ground_truth, num_scales=num_scales)
 
         # Backward pass
         loss.backward()
@@ -232,6 +233,7 @@ def validate(
     model: TextToAudioEmbedding,
     dataloader: DataLoader,
     device: str,
+    num_scales: int = 4,
 ) -> float:
     """Validate model."""
     model.eval()
@@ -246,8 +248,8 @@ def validate(
             # Forward pass
             prediction = model(text_labels)
 
-            # Compute loss
-            loss = nn.functional.mse_loss(prediction, ground_truth)
+            # Compute multi-scale loss
+            loss = multi_scale_loss(prediction, ground_truth, num_scales=num_scales)
 
             # Track loss
             total_loss += loss.item()
@@ -320,6 +322,12 @@ def main():
         default=30.0,
         help="Maximum audio duration in seconds",
     )
+    parser.add_argument(
+        "--num-scales",
+        type=int,
+        default=4,
+        help="Number of scales for multi-scale loss (default: 4)",
+    )
 
     args = parser.parse_args()
 
@@ -338,6 +346,7 @@ def main():
     logger.info(f"   Learning rate: {args.lr}")
     logger.info(f"   Seed: {args.seed}")
     logger.info(f"   Max duration: {args.max_duration}s")
+    logger.info(f"   Multi-scale loss: {args.num_scales} scales")
 
     # Create output directory
     output_dir = Path(args.output_dir)
@@ -436,12 +445,23 @@ def main():
         logger.info(f"\nEpoch {epoch + 1}/{args.epochs}")
 
         # Train
-        train_loss = train_epoch(text_encoder, train_dataloader, optimizer, device)
+        train_loss = train_epoch(
+            text_encoder,
+            train_dataloader,
+            optimizer,
+            device,
+            num_scales=args.num_scales,
+        )
         logger.info(f"   Train loss: {train_loss:.4f}")
 
         # Validate
         if val_dataloader is not None:
-            val_loss = validate(text_encoder, val_dataloader, device)
+            val_loss = validate(
+                text_encoder,
+                val_dataloader,
+                device,
+                num_scales=args.num_scales,
+            )
             logger.info(f"   Val loss: {val_loss:.4f}")
 
             # Save best model

@@ -11,6 +11,7 @@ from typing import Optional, Union
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
@@ -18,19 +19,26 @@ logger = logging.getLogger(__name__)
 
 class TextToAudioEmbedding(nn.Module):
     """
-    Text-to-audio-embedding encoder using Sentence Transformers.
+    Text-to-audio-embedding encoder using Sentence Transformers with Cross-Attention.
 
     This model learns to map rich text analysis (from Qwen3-Omni) to the
     same 32×1024 audio tokens that the voice encoder + Perceiver produce.
     This enables text-only audio generation during inference.
 
     Architecture:
-        Text → Sentence Transformer (frozen) → Projection → 1024-dim → 32 tokens
+        Text → Sentence Transformer (frozen, 768-dim) → Projection (768→1024)
+                                                        ↓
+                                    Learnable Query Embeddings (32, 768)
+                                                        ↓
+                                  Cross-Attention (Query ← Text)
+                                                        ↓
+                                      32 unique tokens (each attends differently)
 
     Args:
         model_name: Sentence Transformer model name (default: sentence-transformers/all-mpnet-base-v2)
         num_queries: Number of output queries (default: 32 for Perceiver compatibility)
         embedding_dim: Output embedding dimension (default: 1024 for Perceiver compatibility)
+        num_heads: Number of attention heads (default: 8)
         device: Device to load model on (auto/cuda/mps/cpu)
         freeze_encoder: Whether to freeze sentence transformer (default: True)
         latent_dim: Dimension of projection intermediate layer (default: None for linear)
@@ -48,6 +56,7 @@ class TextToAudioEmbedding(nn.Module):
         model_name: str = "sentence-transformers/all-mpnet-base-v2",
         num_queries: int = 32,
         embedding_dim: int = 1024,
+        num_heads: int = 8,
         device: str = "auto",
         freeze_encoder: bool = True,
         latent_dim: Optional[int] = None,
@@ -57,6 +66,7 @@ class TextToAudioEmbedding(nn.Module):
         self.model_name = model_name
         self.num_queries = num_queries
         self.embedding_dim = embedding_dim
+        self.num_heads = num_heads
         self.freeze_encoder = freeze_encoder
 
         # Determine device
@@ -68,6 +78,7 @@ class TextToAudioEmbedding(nn.Module):
         logger.info(f"📝 Loading text-to-audio-embedding encoder: {model_name}")
         logger.info(f"   Device: {self.device}")
         logger.info(f"   Output: {num_queries} × {embedding_dim}")
+        logger.info(f"   Architecture: Cross-Attention with {num_heads} heads")
 
         # Load Sentence Transformer
         try:
@@ -110,10 +121,24 @@ class TextToAudioEmbedding(nn.Module):
         # Initialize projection weights
         self._init_weights()
 
-        # Learnable query embeddings for generating fixed number of tokens
-        # This allows variable-length text → fixed 32 tokens
-        self.query_embeddings = nn.Parameter(torch.randn(num_queries, self.encoder_output_dim))
-        nn.init.normal_(self.query_embeddings, std=0.02)
+        # Learnable query embeddings for cross-attention
+        # These learnable queries will attend to the text representation
+        self.query_embeddings = nn.Parameter(
+            torch.randn(num_queries, self.encoder_output_dim) * 0.02
+        )
+        logger.info(f"   ✓ Learnable query embeddings: ({num_queries}, {self.encoder_output_dim})")
+
+        # Cross-attention layer: queries attend to text representation
+        self.cross_attention = nn.MultiheadAttention(
+            embed_dim=embedding_dim,
+            num_heads=num_heads,
+            batch_first=True,
+        )
+        logger.info(f"   ✓ Cross-attention: {num_heads} heads, dim={embedding_dim}")
+
+        # Layer normalization for residual connection
+        self.layer_norm = nn.LayerNorm(embedding_dim)
+        logger.info("   ✓ Layer normalization for residual connection")
 
         # Output dimension attribute
         self.output_dim = embedding_dim
@@ -133,7 +158,7 @@ class TextToAudioEmbedding(nn.Module):
         text: Union[str, list[str]],
     ) -> torch.Tensor:
         """
-        Encode text analysis to audio-compatible embeddings.
+        Encode text analysis to audio-compatible embeddings using cross-attention.
 
         Args:
             text: Text analysis (single string or list of strings)
@@ -156,7 +181,7 @@ class TextToAudioEmbedding(nn.Module):
         with torch.set_grad_enabled(not self.freeze_encoder):
             # SentenceTransformer.encode returns numpy array by default
             # We need to use it differently to get tensors with gradients
-            embeddings = self.sentence_transformer.encode(
+            text_embeddings = self.sentence_transformer.encode(
                 text,
                 convert_to_numpy=False,
                 convert_to_tensor=True,
@@ -164,23 +189,32 @@ class TextToAudioEmbedding(nn.Module):
             )  # (batch, encoder_output_dim)
 
         # Ensure embeddings are on correct device
-        embeddings = embeddings.to(self.device)
+        text_embeddings = text_embeddings.to(self.device)  # (batch, encoder_output_dim)
 
-        # Project to embedding_dim
-        projected = self.projection(embeddings)  # (batch, embedding_dim)
+        # Project text to embedding_dim
+        batch_size = text_embeddings.shape[0]
+        text_projected = self.projection(text_embeddings)  # (batch, embedding_dim)
 
-        # Generate fixed number of query tokens using learned queries
-        batch_size = projected.shape[0]
+        # Expand text to (batch, 1, embedding_dim) for use as key/value in attention
+        text_kv = text_projected.unsqueeze(1)  # (batch, 1, embedding_dim)
 
-        # Expand to (batch, 1, embedding_dim)
-        text_expanded = projected.unsqueeze(1)  # (batch, 1, embedding_dim)
+        # Project learnable queries to embedding_dim
+        queries_projected = self.projection(self.query_embeddings)  # (num_queries, embedding_dim)
 
-        # Expand to (batch, num_queries, embedding_dim)
-        output = text_expanded.expand(batch_size, self.num_queries, self.embedding_dim)
+        # Expand queries to batch dimension
+        queries = queries_projected.unsqueeze(0).expand(batch_size, -1, -1)  # (batch, num_queries, embedding_dim)
 
-        # Add query-specific information via learned modulation
-        query_modulation = self.projection(self.query_embeddings).unsqueeze(0)  # (1, num_queries, embedding_dim)
-        output = output + query_modulation * 0.1  # Small modulation
+        # Apply cross-attention: queries attend to text representation
+        # query: (batch, num_queries, embedding_dim)
+        # key/value: (batch, 1, embedding_dim)
+        attn_output, _ = self.cross_attention(
+            query=queries,
+            key=text_kv,
+            value=text_kv,
+        )  # (batch, num_queries, embedding_dim)
+
+        # Residual connection + layer norm
+        output = self.layer_norm(queries + attn_output)  # (batch, num_queries, embedding_dim)
 
         return output
 
@@ -202,9 +236,12 @@ class TextToAudioEmbedding(nn.Module):
             "model_name": self.model_name,
             "num_queries": self.num_queries,
             "embedding_dim": self.embedding_dim,
+            "num_heads": self.num_heads,
             "freeze_encoder": self.freeze_encoder,
             "projection_state_dict": self.projection.state_dict(),
             "query_embeddings": self.query_embeddings,
+            "cross_attention_state_dict": self.cross_attention.state_dict(),
+            "layer_norm_state_dict": self.layer_norm.state_dict(),
         }
 
         torch.save(checkpoint, path)
@@ -228,14 +265,67 @@ class TextToAudioEmbedding(nn.Module):
         assert checkpoint["model_name"] == self.model_name
         assert checkpoint["num_queries"] == self.num_queries
         assert checkpoint["embedding_dim"] == self.embedding_dim
+        assert checkpoint["num_heads"] == self.num_heads
 
         # Load weights
         self.projection.load_state_dict(checkpoint["projection_state_dict"])
         self.query_embeddings.data = checkpoint["query_embeddings"]
+        self.cross_attention.load_state_dict(checkpoint["cross_attention_state_dict"])
+        self.layer_norm.load_state_dict(checkpoint["layer_norm_state_dict"])
 
         logger.info(f"✓ Loaded text encoder from {path}")
 
     def get_trainable_params(self):
         """Get trainable parameters (excluding frozen encoder)."""
-        params = list(self.projection.parameters()) + [self.query_embeddings]
+        params = (
+            list(self.projection.parameters()) +
+            [self.query_embeddings] +
+            list(self.cross_attention.parameters()) +
+            list(self.layer_norm.parameters())
+        )
         return params
+
+
+def multi_scale_loss(
+    prediction: torch.Tensor,
+    ground_truth: torch.Tensor,
+    num_scales: int = 4,
+) -> torch.Tensor:
+    """
+    Compute MSE loss at multiple scales.
+
+    This loss function divides the tokens into chunks and computes MSE loss
+    for each chunk separately, then averages the losses. This encourages
+    the model to learn fine-grained token-level representations.
+
+    Args:
+        prediction: Predicted tokens (batch, num_queries, embedding_dim)
+        ground_truth: Ground truth tokens (batch, num_queries, embedding_dim)
+        num_scales: Number of chunks to divide tokens into (default: 4)
+
+    Returns:
+        Average loss across all scales
+
+    Examples:
+        >>> pred = torch.randn(2, 32, 1024)
+        >>> gt = torch.randn(2, 32, 1024)
+        >>> loss = multi_scale_loss(pred, gt, num_scales=4)
+        >>> loss.item() > 0
+        True
+    """
+    batch_size, num_queries, embedding_dim = prediction.shape
+    chunk_size = num_queries // num_scales
+
+    total_loss = 0.0
+
+    for i in range(num_scales):
+        start_idx = i * chunk_size
+        # Ensure last chunk includes all remaining tokens
+        end_idx = start_idx + chunk_size if i < num_scales - 1 else num_queries
+
+        chunk_pred = prediction[:, start_idx:end_idx, :]
+        chunk_gt = ground_truth[:, start_idx:end_idx, :]
+
+        total_loss += F.mse_loss(chunk_pred, chunk_gt)
+
+    return total_loss / num_scales
