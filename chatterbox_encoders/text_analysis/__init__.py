@@ -6,9 +6,9 @@ and learns to map text analysis to audio embeddings.
 """
 
 from chatterbox_encoders.text_analysis.qwen_analyzer import QwenOmniAnalyzer
-# from chatterbox_encoders.text_analysis.text_encoder import TextToAudioEmbedding  # TODO: Task 4
+from chatterbox_encoders.text_analysis.text_encoder import TextToAudioEmbedding
 
 __all__ = [
     "QwenOmniAnalyzer",
-    # "TextToAudioEmbedding",  # TODO: Task 4
+    "TextToAudioEmbedding",
 ]
