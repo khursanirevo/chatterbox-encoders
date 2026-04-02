@@ -15,16 +15,15 @@ import argparse
 import json
 import logging
 from pathlib import Path
-from typing import Dict, List
+from typing import List
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from chatterbox_encoders.text_analysis import QwenOmniAnalyzer, TextToAudioEmbedding
-from chatterbox_encoders.audio import PerceiverResampler
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,7 +54,7 @@ class AudioTextDataset(Dataset):
 
     def __getitem__(self, idx):
         # Load audio
-        audio_path = self.audio_files[idx]
+        _ = self.audio_files[idx]
 
         # Extract text analysis
         # text_analysis = self.qwen_analyzer.analyze_from_file(str(audio_path))
@@ -203,7 +202,7 @@ def main():
     else:
         device = args.device
 
-    logger.info(f"🚀 Training text-to-audio-embedding encoder")
+    logger.info("🚀 Training text-to-audio-embedding encoder")
     logger.info(f"   Device: {device}")
     logger.info(f"   Epochs: {args.epochs}")
     logger.info(f"   Batch size: {args.batch_size}")
@@ -220,11 +219,11 @@ def main():
         train_data = json.load(f)
 
     # Assuming train_data is a list of audio file paths
-    train_audio_files = [Path(p) for p in train_data]
+    _ = [Path(p) for p in train_data]
 
     # Initialize Qwen3-Omni analyzer
-    logger.info(f"🎤 Initializing Qwen3-Omni analyzer...")
-    qwen_analyzer = QwenOmniAnalyzer(device=device)
+    logger.info("🎤 Initializing Qwen3-Omni analyzer...")
+    _ = QwenOmniAnalyzer(device=device)
 
     # Create dataset and dataloader
     # TODO: Implement AudioTextDataset properly
@@ -237,7 +236,7 @@ def main():
     # train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
 
     # Initialize text encoder
-    logger.info(f"📝 Initializing text encoder...")
+    logger.info("📝 Initializing text encoder...")
     text_encoder = TextToAudioEmbedding(device=device)
 
     # Load checkpoint if specified
@@ -247,10 +246,10 @@ def main():
 
     # Initialize optimizer
     trainable_params = text_encoder.get_trainable_params()
-    optimizer = optim.Adam(trainable_params, lr=args.lr)
+    _ = optim.Adam(trainable_params, lr=args.lr)
 
     # Training loop
-    logger.info(f"🏋️ Starting training...")
+    logger.info("🏋️ Starting training...")
     best_val_loss = float("inf")
 
     for epoch in range(args.epochs):
@@ -279,7 +278,7 @@ def main():
         text_encoder.save(checkpoint_path)
         logger.info(f"   ✓ Saved checkpoint: {checkpoint_path}")
 
-    logger.info(f"\n✅ Training complete!")
+    logger.info("\n✅ Training complete!")
     logger.info(f"   Best val loss: {best_val_loss:.4f}")
 
 
