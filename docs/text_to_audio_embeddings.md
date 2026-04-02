@@ -35,11 +35,11 @@ Text Labels → Text Encoder → 32×1024 tokens → Audio Generation
 
 ### TextToAudioEmbedding
 
-T5-based encoder that maps user-provided text labels to 32×1024 audio tokens.
+Sentence Transformer-based encoder that maps user-provided text labels to 32×1024 audio tokens.
 
 **Architecture:**
 ```
-Text → T5 Encoder (512-dim) → Projection → 1024-dim → 32 tokens
+Text → Sentence Transformer (768-dim) → Projection → 1024-dim → 32 tokens
 ```
 
 **Usage:**
@@ -147,9 +147,9 @@ python scripts/train_text_encoder.py \
 
 For each (audio, text_label) pair in the dataset:
 1. **Extract ground truth**: Audio → S3Tokenizer → SpeechTokenEmbedding → Perceiver → 32×1024 tokens
-2. **Get prediction**: Text label → T5 Encoder → Projection → 32×1024 tokens
+2. **Get prediction**: Text label → Sentence Transformer → Projection → 32×1024 tokens
 3. **Compute loss**: MSE(prediction, ground_truth)
-4. **Update weights**: Backpropagation through projection + query embeddings (T5 is frozen)
+4. **Update weights**: Backpropagation through projection + query embeddings (Sentence Transformer is frozen)
 
 ### Training Output
 
@@ -189,24 +189,24 @@ audio_tokens = encoder(text_label)  # (1, 32, 1024)
 ## Model Details
 
 ### Text Encoder
-- **Base**: T5-small (~240MB)
+- **Base**: sentence-transformers/all-mpnet-base-v2 (~420MB)
 - **Output dim**: 1024 (for Perceiver compatibility)
 - **Num queries**: 32 (for Perceiver compatibility)
 - **Trainable params**: Projection layer + query embeddings (~2M params)
-- **Frozen params**: T5 encoder (reduces training cost)
+- **Frozen params**: Sentence Transformer (reduces training cost)
 
 ## Performance Considerations
 
 - **Training speed**: ~10-100 examples/second (GPU dependent)
-- **Inference speed**: Real-time (T5-small is fast)
+- **Inference speed**: Real-time (Sentence Transformer is fast)
 - **Memory**: ~2GB GPU memory for training
-- **Model size**: ~250MB (T5-small + projection)
+- **Model size**: ~430MB (Sentence Transformer + projection)
 
 ## Future Work
 
 - [ ] Implement complete AudioTextDataset with voice encoder integration
 - [ ] Add data augmentation for text labels
-- [ ] Experiment with larger T5 variants (base, large)
+- [ ] Experiment with different Sentence Transformer models
 - [ ] Add cross-attention between learned queries and text embeddings
 - [ ] Benchmark reconstruction quality vs learned embeddings
-- [ ] Add fine-tuning of T5 encoder for better performance
+- [ ] Add fine-tuning of Sentence Transformer for better performance

@@ -1,12 +1,12 @@
 """
-Training script for TextToAudioEmbedding (T5-based).
+Training script for TextToAudioEmbedding (Sentence Transformer-based).
 
 Learns to map text labels to the same 32×1024 audio tokens that the voice encoder + Perceiver produce.
 
 Training loop:
     For each (audio, text_label) pair:
         1. Extract ground truth: Audio → S3Tokenizer → Embedding → Perceiver → 32×1024 tokens
-        2. Get prediction: Text label → T5 → Projection → 32×1024 tokens
+        2. Get prediction: Text label → Sentence Transformer → Projection → 32×1024 tokens
         3. Train with MSE loss
 
 Usage:
@@ -258,7 +258,7 @@ def validate(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train TextToAudioEmbedding (T5-based)")
+    parser = argparse.ArgumentParser(description="Train TextToAudioEmbedding (Sentence Transformer-based)")
     parser.add_argument(
         "--data-dir",
         type=str,
@@ -330,7 +330,7 @@ def main():
     device = get_device(args.device if args.device != "auto" else "auto")
 
     logger.info("=" * 60)
-    logger.info("🚀 Training TextToAudioEmbedding (T5-based)")
+    logger.info("🚀 Training TextToAudioEmbedding (Sentence Transformer-based)")
     logger.info("=" * 60)
     logger.info(f"   Device: {device}")
     logger.info(f"   Epochs: {args.epochs}")

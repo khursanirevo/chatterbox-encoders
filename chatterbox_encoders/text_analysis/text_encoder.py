@@ -1,5 +1,5 @@
 """
-Text-to-audio-embedding encoder using T5.
+Text-to-audio-embedding encoder using Sentence Transformers.
 
 Learns to map text analysis of audio to the same 32×1024 tokens
 that the voice encoder produces, enabling text-only audio generation.
@@ -11,29 +11,29 @@ from typing import Optional, Union
 
 import torch
 import torch.nn as nn
-from transformers import T5EncoderModel, T5Tokenizer
+from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
 
 
 class TextToAudioEmbedding(nn.Module):
     """
-    Text-to-audio-embedding encoder using T5.
+    Text-to-audio-embedding encoder using Sentence Transformers.
 
     This model learns to map rich text analysis (from Qwen3-Omni) to the
     same 32×1024 audio tokens that the voice encoder + Perceiver produce.
     This enables text-only audio generation during inference.
 
     Architecture:
-        Text → T5 Encoder (frozen or trainable) → Projection → 1024-dim → Perceiver → 32×1024 tokens
+        Text → Sentence Transformer (frozen) → Projection → 1024-dim → 32 tokens
 
     Args:
-        model_name: T5 model name (default: t5-small)
+        model_name: Sentence Transformer model name (default: sentence-transformers/all-mpnet-base-v2)
         num_queries: Number of output queries (default: 32 for Perceiver compatibility)
         embedding_dim: Output embedding dimension (default: 1024 for Perceiver compatibility)
         device: Device to load model on (auto/cuda/mps/cpu)
-        freeze_t5: Whether to freeze T5 encoder (default: True)
-        latent_dim: Dimension of T5 → 1024 projection intermediate layer (default: None for linear)
+        freeze_encoder: Whether to freeze sentence transformer (default: True)
+        latent_dim: Dimension of projection intermediate layer (default: None for linear)
 
     Examples:
         >>> encoder = TextToAudioEmbedding(device="cpu")
@@ -45,11 +45,11 @@ class TextToAudioEmbedding(nn.Module):
 
     def __init__(
         self,
-        model_name: str = "t5-small",
+        model_name: str = "sentence-transformers/all-mpnet-base-v2",
         num_queries: int = 32,
         embedding_dim: int = 1024,
         device: str = "auto",
-        freeze_t5: bool = True,
+        freeze_encoder: bool = True,
         latent_dim: Optional[int] = None,
     ):
         super().__init__()
@@ -57,7 +57,7 @@ class TextToAudioEmbedding(nn.Module):
         self.model_name = model_name
         self.num_queries = num_queries
         self.embedding_dim = embedding_dim
-        self.freeze_t5 = freeze_t5
+        self.freeze_encoder = freeze_encoder
 
         # Determine device
         if device == "auto":
@@ -69,45 +69,41 @@ class TextToAudioEmbedding(nn.Module):
         logger.info(f"   Device: {self.device}")
         logger.info(f"   Output: {num_queries} × {embedding_dim}")
 
-        # Load T5 tokenizer
+        # Load Sentence Transformer
         try:
-            self.tokenizer = T5Tokenizer.from_pretrained(model_name)
-            logger.info("   ✓ T5 tokenizer loaded")
-        except Exception as e:
-            logger.error(f"   ❌ Failed to load T5 tokenizer: {e}")
-            raise
+            self.sentence_transformer = SentenceTransformer(model_name)
+            self.encoder_output_dim = self.sentence_transformer.get_sentence_embedding_dimension()
+            logger.info(f"   ✓ Sentence Transformer loaded (dim={self.encoder_output_dim})")
 
-        # Load T5 encoder
-        try:
-            self.t5 = T5EncoderModel.from_pretrained(model_name).to(self.device)
-            self.t5_output_dim = self.t5.config.d_model  # 512 for t5-small
+            # Move to device
+            self.sentence_transformer = self.sentence_transformer.to(self.device)
 
-            # Freeze T5 if specified
-            if freeze_t5:
-                for param in self.t5.parameters():
+            # Freeze encoder if specified
+            if freeze_encoder:
+                for param in self.sentence_transformer.parameters():
                     param.requires_grad = False
-                logger.info(f"   ✓ T5 encoder frozen (d_model={self.t5_output_dim})")
+                logger.info("   ✓ Sentence Transformer frozen")
             else:
-                logger.info(f"   ✓ T5 encoder trainable (d_model={self.t5_output_dim})")
+                logger.info("   ✓ Sentence Transformer trainable")
         except Exception as e:
-            logger.error(f"   ❌ Failed to load T5 encoder: {e}")
+            logger.error(f"   ❌ Failed to load Sentence Transformer: {e}")
             raise
 
-        # Create projection from T5 output to embedding_dim
+        # Create projection from encoder output to embedding_dim
         if latent_dim is None:
             # Single linear layer
-            self.projection = nn.Linear(self.t5_output_dim, embedding_dim)
-            logger.info(f"   ✓ Projection: {self.t5_output_dim} → {embedding_dim} (linear)")
+            self.projection = nn.Linear(self.encoder_output_dim, embedding_dim)
+            logger.info(f"   ✓ Projection: {self.encoder_output_dim} → {embedding_dim} (linear)")
         else:
             # Two-layer MLP
             self.projection = nn.Sequential(
-                nn.Linear(self.t5_output_dim, latent_dim),
+                nn.Linear(self.encoder_output_dim, latent_dim),
                 nn.GELU(),
                 nn.Dropout(0.1),
                 nn.Linear(latent_dim, embedding_dim),
                 nn.Dropout(0.1),
             )
-            logger.info(f"   ✓ Projection: {self.t5_output_dim} → {latent_dim} → {embedding_dim} (MLP)")
+            logger.info(f"   ✓ Projection: {self.encoder_output_dim} → {latent_dim} → {embedding_dim} (MLP)")
 
         self.projection = self.projection.to(self.device)
 
@@ -116,7 +112,7 @@ class TextToAudioEmbedding(nn.Module):
 
         # Learnable query embeddings for generating fixed number of tokens
         # This allows variable-length text → fixed 32 tokens
-        self.query_embeddings = nn.Parameter(torch.randn(num_queries, self.t5_output_dim))
+        self.query_embeddings = nn.Parameter(torch.randn(num_queries, self.encoder_output_dim))
         nn.init.normal_(self.query_embeddings, std=0.02)
 
         # Output dimension attribute
@@ -135,14 +131,12 @@ class TextToAudioEmbedding(nn.Module):
     def forward(
         self,
         text: Union[str, list[str]],
-        return_attention: bool = False,
     ) -> torch.Tensor:
         """
         Encode text analysis to audio-compatible embeddings.
 
         Args:
             text: Text analysis (single string or list of strings)
-            return_attention: Whether to return attention weights
 
         Returns:
             Audio embeddings: (batch, num_queries, embedding_dim) = (batch, 32, 1024)
@@ -154,35 +148,37 @@ class TextToAudioEmbedding(nn.Module):
             >>> emb.shape
             torch.Size([1, 32, 1024])
         """
-        # Tokenize
-        inputs = self.tokenizer(
-            text,
-            return_tensors="pt",
-            padding=True,
-            truncation=True,
-            max_length=512,
-        )
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        # Normalize input to list
+        if isinstance(text, str):
+            text = [text]
 
-        # Encode with T5
-        with torch.set_grad_enabled(not self.freeze_t5):
-            outputs = self.t5(**inputs)
-            t5_emb = outputs.last_hidden_state  # (batch, seq_len, d_model)
+        # Encode with Sentence Transformer
+        with torch.set_grad_enabled(not self.freeze_encoder):
+            # SentenceTransformer.encode returns numpy array by default
+            # We need to use it differently to get tensors with gradients
+            embeddings = self.sentence_transformer.encode(
+                text,
+                convert_to_numpy=False,
+                convert_to_tensor=True,
+                show_progress_bar=False,
+            )  # (batch, encoder_output_dim)
+
+        # Ensure embeddings are on correct device
+        embeddings = embeddings.to(self.device)
 
         # Project to embedding_dim
-        projected = self.projection(t5_emb)  # (batch, seq_len, embedding_dim)
+        projected = self.projection(embeddings)  # (batch, embedding_dim)
 
         # Generate fixed number of query tokens using learned queries
-        # Approach: Use cross-attention between learned queries and text embeddings
         batch_size = projected.shape[0]
 
-        # Simple approach: average pool text embeddings and use queries to attend
-        # For now, use a simpler approach: take mean of text embeddings and repeat
-        text_pooled = projected.mean(dim=1, keepdim=True)  # (batch, 1, embedding_dim)
-        output = text_pooled.expand(batch_size, self.num_queries, self.embedding_dim)  # (batch, num_queries, embedding_dim)
+        # Expand to (batch, 1, embedding_dim)
+        text_expanded = projected.unsqueeze(1)  # (batch, 1, embedding_dim)
+
+        # Expand to (batch, num_queries, embedding_dim)
+        output = text_expanded.expand(batch_size, self.num_queries, self.embedding_dim)
 
         # Add query-specific information via learned modulation
-        # (This is a simplified approach - could use cross-attention for more sophisticated)
         query_modulation = self.projection(self.query_embeddings).unsqueeze(0)  # (1, num_queries, embedding_dim)
         output = output + query_modulation * 0.1  # Small modulation
 
@@ -206,7 +202,7 @@ class TextToAudioEmbedding(nn.Module):
             "model_name": self.model_name,
             "num_queries": self.num_queries,
             "embedding_dim": self.embedding_dim,
-            "freeze_t5": self.freeze_t5,
+            "freeze_encoder": self.freeze_encoder,
             "projection_state_dict": self.projection.state_dict(),
             "query_embeddings": self.query_embeddings,
         }
@@ -240,6 +236,6 @@ class TextToAudioEmbedding(nn.Module):
         logger.info(f"✓ Loaded text encoder from {path}")
 
     def get_trainable_params(self):
-        """Get trainable parameters (excluding frozen T5)."""
+        """Get trainable parameters (excluding frozen encoder)."""
         params = list(self.projection.parameters()) + [self.query_embeddings]
         return params

@@ -37,7 +37,7 @@ dependencies = [
     "s3tokenizer>=0.1.0",
     "tokenizers>=0.14",
     "einops>=0.6",
-    "transformers>=4.40.0",
+    "sentence-transformers>=2.2.0",
 ]
 
 [project.optional-dependencies]
@@ -64,3 +64,8 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
 ignore = ["E501"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
