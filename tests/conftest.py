@@ -3,7 +3,6 @@ Pytest configuration for chatterbox_encoders tests.
 """
 
 import os
-import sys
 
 # Force CPU-only mode before any torch imports
 os.environ['CUDA_VISIBLE_DEVICES'] = ''

@@ -7,8 +7,10 @@ pitch_timbre, style, notes, and caption.
 """
 
 import logging
+import re
 from typing import Optional
 
+import librosa
 import numpy as np
 import torch
 
@@ -248,18 +250,17 @@ class QwenOmniAnalyzer:
         }
 
         # Look for patterns like "emotion: happy" or "emotion - happy"
-        import re
 
         patterns = {
-            "emotion": r"(?:emotion|feeling)\s*[::-]\s*([^\n]+)",
-            "profile": r"(?:profile|speaker)\s*[::-]\s*([^\n]+)",
-            "mood": r"(?:mood|atmosphere)\s*[::-]\s*([^\n]+)",
-            "speed": r"(?:speed|pace|tempo)\s*[::-]\s*([^\n]+)",
-            "prosody": r"(?:prosody|rhythm|cadence)\s*[::-]\s*([^\n]+)",
-            "pitch_timbre": r"(?:pitch[-_\s]?timbre|voice[-_\s]?quality)\s*[::-]\s*([^\n]+)",
-            "style": r"(?:style|delivery)\s*[::-]\s*([^\n]+)",
-            "notes": r"(?:notes|observations|other)\s*[::-]\s*([^\n]+)",
-            "caption": r"(?:caption|summary|description)\s*[::-]\s*([^\n]+)",
+            "emotion": r"(?:emotion|feeling)\s*[:-]\s*([^\n]+)",
+            "profile": r"(?:profile|speaker)\s*[:-]\s*([^\n]+)",
+            "mood": r"(?:mood|atmosphere)\s*[:-]\s*([^\n]+)",
+            "speed": r"(?:speed|pace|tempo)\s*[:-]\s*([^\n]+)",
+            "prosody": r"(?:prosody|rhythm|cadence)\s*[:-]\s*([^\n]+)",
+            "pitch_timbre": r"(?:pitch[-_\s]?timbre|voice[-_\s]?quality)\s*[:-]\s*([^\n]+)",
+            "style": r"(?:style|delivery)\s*[:-]\s*([^\n]+)",
+            "notes": r"(?:notes|observations|other)\s*[:-]\s*([^\n]+)",
+            "caption": r"(?:caption|summary|description)\s*[:-]\s*([^\n]+)",
         }
 
         for key, pattern in patterns.items():
@@ -327,8 +328,6 @@ class QwenOmniAnalyzer:
             >>> print(analysis['caption'])
             A cheerful greeting
         """
-        import librosa
-
         # Load audio
         audio, sr = librosa.load(audio_path, sr=16000, mono=True)
         audio = audio.astype(np.float32)
