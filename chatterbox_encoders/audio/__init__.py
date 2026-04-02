@@ -7,6 +7,7 @@ This module provides components for extracting features from audio:
 - Embedding projections (SpeakerProjector, EmotionProjector)
 - Token compression (PerceiverResampler)
 - Mel spectrogram extraction
+- Speech token decoding (S3GenDecoder)
 """
 
 from chatterbox_encoders.audio.s3_tokenizer import S3Tokenizer
@@ -19,6 +20,7 @@ from chatterbox_encoders.audio.mel_extractor import (
     mel_spectrogram_24k,
     mel_spectrogram_40k,
 )
+from chatterbox_encoders.audio.decoder import S3GenDecoder
 
 __all__ = [
     "S3Tokenizer",
@@ -26,6 +28,7 @@ __all__ = [
     "SpeakerProjector",
     "PerceiverResampler",
     "EmotionProjector",
+    "S3GenDecoder",
     "mel_spectrogram_16k",
     "mel_spectrogram_24k",
     "mel_spectrogram_40k",

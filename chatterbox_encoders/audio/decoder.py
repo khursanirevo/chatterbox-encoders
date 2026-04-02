@@ -16,7 +16,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-class MinimalS3Gen(nn.Module):
+class S3GenDecoder(nn.Module):
     """
     Minimal S3Gen decoder for speech token reconstruction.
 
@@ -43,24 +43,14 @@ class MinimalS3Gen(nn.Module):
             device: Device to load model on
 
         Returns:
-            MinimalS3Gen: Loaded decoder
+            S3GenDecoder: Loaded decoder
         """
         weights_path = Path(weights_dir) / "s3gen.safetensors"
         if not weights_path.exists():
             raise FileNotFoundError(f"S3Gen weights not found: {weights_path}")
 
-        # For now, we'll load the full S3Gen from Chatterbox
-        # In production, this would be a standalone implementation
-        import sys
-        repo_root = Path(__file__).parent.parent.parent
-        while repo_root.name != "chatterbox" and repo_root.parent != repo_root:
-            repo_root = repo_root.parent
-
-        src_path = repo_root / "src"
-        if src_path.exists():
-            sys.path.insert(0, str(src_path))
-
-        from chatterbox.models.s3gen import S3Gen
+        # Import from local s3gen copy
+        from chatterbox_encoders.audio.s3gen import S3Gen
         from safetensors.torch import load_file
 
         logger.info(f"Loading S3Gen from: {weights_path}")
@@ -80,9 +70,6 @@ class MinimalS3Gen(nn.Module):
         decoder = cls(weights_dir, device)
         decoder.model = model
         decoder.tokenizer = model.tokenizer
-
-        # Store reference to original module path
-        decoder._module_path = src_path
 
         return decoder
 
@@ -137,6 +124,11 @@ class MinimalS3Gen(nn.Module):
         """
         if self.model is None:
             raise RuntimeError("Model not loaded")
+
+        # Ensure tokens are on the correct device
+        if isinstance(tokens, np.ndarray):
+            tokens = torch.from_numpy(tokens)
+        tokens = tokens.to(self.device)
 
         # Prepare reference audio
         if isinstance(ref_audio, np.ndarray):

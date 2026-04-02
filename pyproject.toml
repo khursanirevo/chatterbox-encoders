@@ -34,6 +34,9 @@ dependencies = [
     "huggingface-hub>=0.20",
     "soundfile>=0.12",
     "scipy>=1.10",
+    "s3tokenizer>=0.1.0",
+    "tokenizers>=0.14",
+    "einops>=0.6",
 ]
 
 [project.optional-dependencies]
@@ -45,6 +48,9 @@ dev = [
 [project.urls]
 Homepage = "https://github.com/khursanirevo/chatterbox-encoders"
 Repository = "https://github.com/khursanirevo/chatterbox-encoders"
+
+[project.scripts]
+chatterbox-encoders = "chatterbox_encoders.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
