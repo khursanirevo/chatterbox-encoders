@@ -31,12 +31,13 @@ dependencies = [
     "numpy>=1.24",
     "librosa>=0.10",
     "safetensors>=0.4",
-    "huggingface-hub>=0.20",
+    "huggingface-hub>=0.23",
     "soundfile>=0.12",
     "scipy>=1.10",
     "s3tokenizer>=0.1.0",
     "tokenizers>=0.14",
     "einops>=0.6",
+    "transformers>=4.40.0",
 ]
 
 [project.optional-dependencies]
