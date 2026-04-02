@@ -34,7 +34,10 @@ env/
 # Weights (too large for GitHub)
 weights/*.safetensors
 weights/*.json
+chatterbox_encoders/weights/*.safetensors
+chatterbox_encoders/weights/*.json
 !weights/README.md
+!chatterbox_encoders/weights/README.md
 
 # Checkpoints and speaker embeddings
 checkpoints/
