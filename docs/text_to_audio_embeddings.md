@@ -55,45 +55,113 @@ embeddings = encoder(text)  # (1, 32, 1024)
 
 ### Data Preparation
 
-Create a JSON file mapping reference audio to text labels:
+**Step 1: Organize your audio files**
+
+Create a directory with your audio files:
+
+```bash
+mkdir -p data/train_audio
+mkdir -p data/val_audio
+
+# Copy your audio files to these directories
+# cp /path/to/train/*.wav data/train_audio/
+# cp /path/to/val/*.wav data/val_audio/
+```
+
+**Step 2: Create labels.json**
+
+Use the helper script to create a labels template:
+
+```bash
+python scripts/prepare_training_data.py --data-dir data/train_audio
+python scripts/prepare_training_data.py --data-dir data/val_audio
+```
+
+This creates `labels.json` in each directory:
 
 ```json
-[
-    {
-        "audio": "data/audio/speech_001.wav",
-        "text": "A cheerful greeting with warm tone"
-    },
-    {
-        "audio": "data/audio/speech_002.wav",
-        "text": "Sad farewell with quiet voice"
-    },
-    {
-        "audio": "data/audio/speech_003.wav",
-        "text": "Excited announcement with energetic delivery"
-    }
-]
+{
+  "audio_001.wav": "",
+  "audio_002.wav": "",
+  "audio_003.wav": ""
+}
+```
+
+**Step 3: Fill in text labels**
+
+Edit each `labels.json` and add your text labels:
+
+```json
+{
+  "audio_001.wav": "A cheerful greeting with warm tone and friendly delivery",
+  "audio_002.wav": "Sad farewell with quiet voice and slow tempo",
+  "audio_003.wav": "Excited announcement with energetic delivery and fast pace"
+}
+```
+
+**Expected directory structure:**
+
+```
+data/train_audio/
+    ├── audio_001.wav
+    ├── audio_002.wav
+    ├── audio_003.wav
+    └── labels.json
+
+data/val_audio/
+    ├── audio_001.wav
+    ├── audio_002.wav
+    └── labels.json
 ```
 
 ### Training Command
 
 ```bash
 python scripts/train_text_encoder.py \
-    --train-data data/train_audio.json \
-    --val-data data/val_audio.json \
-    --voice-envelope checkpoints/voice_encoder.pt \
+    --data-dir data/train_audio \
+    --val-data-dir data/val_audio \
     --output-dir checkpoints/text_encoder \
     --epochs 10 \
     --batch-size 4 \
-    --lr 1e-4
+    --lr 1e-4 \
+    --device cuda
+```
+
+**Full options:**
+
+```bash
+python scripts/train_text_encoder.py \
+    --data-dir DATA_DIR \
+    --val-data-dir VAL_DATA_DIR \
+    --output-dir checkpoints/text_encoder \
+    --epochs 10 \
+    --batch-size 4 \
+    --lr 1e-4 \
+    --device auto \
+    --seed 42 \
+    --checkpoint checkpoints/text_encoder/best.pt \
+    --max-duration 30.0
 ```
 
 ### Training Loop
 
-For each audio in the dataset:
-1. Get text label from user
-2. Get ground truth tokens from voice encoder + Perceiver
-3. Train text encoder to predict ground truth from text label
-4. Minimize MSE loss between predicted and ground truth tokens
+For each (audio, text_label) pair in the dataset:
+1. **Extract ground truth**: Audio → S3Tokenizer → SpeechTokenEmbedding → Perceiver → 32×1024 tokens
+2. **Get prediction**: Text label → T5 Encoder → Projection → 32×1024 tokens
+3. **Compute loss**: MSE(prediction, ground_truth)
+4. **Update weights**: Backpropagation through projection + query embeddings (T5 is frozen)
+
+### Training Output
+
+The script will:
+- Save checkpoints to `--output-dir` after each epoch
+- Save best model based on validation loss
+- Log training progress with tqdm progress bars
+- Display train/validation loss after each epoch
+
+**Output files:**
+- `epoch_1.pt`, `epoch_2.pt`, ... - Checkpoints after each epoch
+- `best.pt` - Best model based on validation loss
 
 ## Inference
 
